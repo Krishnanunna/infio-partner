@@ -1,0 +1,1936 @@
+openapi: 3.1.0
+
+info:
+  title: Infio Partner API
+  version: 1.0.0
+  description: |
+    Backend contract for the Infio Partner mobile app, the business side of a
+    hyperlocal service marketplace operating in India.
+
+    A service professional registers through a four-step wizard, uploads work
+    photos, clears Aadhaar and video KYC, buys a membership plan, and then works
+    a lead inbox against a monthly quota. The marketplace charges a flat
+    membership fee and takes zero commission on completed bookings.
+
+    The companion prose reference is `API_SPEC.md`; the two are kept in sync.
+  contact:
+    name: Infio Engineering
+    url: https://infio.app
+
+servers:
+  - url: https://api.infio.app/v1
+    description: Production
+  - url: https://staging-api.infio.app/v1
+    description: Staging
+
+tags:
+  - name: Auth
+    description: OTP-first authentication
+  - name: Reference
+    description: Cacheable lookup data backing the forms
+  - name: Onboarding
+    description: The four-step registration wizard with draft persistence
+  - name: Partner
+    description: Profile, availability and preferences
+  - name: Photos
+    description: Cover and portfolio images
+  - name: KYC
+    description: Aadhaar documents and the business video
+  - name: Billing
+    description: Plan catalogue and checkout
+  - name: Leads
+    description: Customer enquiries, the core of the product
+  - name: Services
+    description: The partner's service catalogue
+  - name: Dashboard
+  - name: Growth
+  - name: Engagement
+    description: Referrals, reviews and notifications
+
+security:
+  - bearerAuth: []
+
+paths:
+  # ---------------------------------------------------------------- Auth ----
+  /auth/otp/request:
+    post:
+      tags: [Auth]
+      summary: Request a one-time code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [phone, channel]
+              properties:
+                phone:
+                  type: string
+                  pattern: '^\+91[6-9][0-9]{9}$'
+                  examples: ['+919849023114']
+                channel:
+                  $ref: '#/components/schemas/OtpChannel'
+      responses:
+        '200':
+          description: Code dispatched
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OtpChallenge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/otp/resend:
+    post:
+      tags: [Auth]
+      summary: Resend the code, optionally over a different channel
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, channel]
+              properties:
+                challenge_id: { type: string }
+                channel: { $ref: '#/components/schemas/OtpChannel' }
+      responses:
+        '200':
+          description: Code resent
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OtpChallenge' }
+        '429': { $ref: '#/components/responses/RateLimited' }
+
+  /auth/otp/verify:
+    post:
+      tags: [Auth]
+      summary: Exchange a code for a session
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [challenge_id, code]
+              properties:
+                challenge_id: { type: string }
+                code:
+                  type: string
+                  pattern: '^[0-9]{6}$'
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AuthSession' }
+        '409':
+          description: Challenge expired
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /auth/login/email:
+    post:
+      tags: [Auth]
+      summary: Email and password sign in
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AuthSession' }
+        '401': { $ref: '#/components/responses/Unauthenticated' }
+
+  /auth/refresh:
+    post:
+      tags: [Auth]
+      summary: Rotate the token pair
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [refresh_token]
+              properties:
+                refresh_token: { type: string }
+      responses:
+        '200':
+          description: New token pair
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/AuthSession' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Revoke the current refresh token
+      responses:
+        '204': { description: Logged out }
+
+  # ----------------------------------------------------------- Reference ----
+  /ref/cities:
+    get:
+      tags: [Reference]
+      summary: Operating cities
+      security: []
+      responses:
+        '200':
+          description: City list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/City' }
+
+  /ref/categories:
+    get:
+      tags: [Reference]
+      summary: The canonical trade taxonomy
+      security: []
+      responses:
+        '200':
+          description: Category list
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ServiceCategory' }
+
+  /ref/categories/{slug}/specializations:
+    get:
+      tags: [Reference]
+      summary: Specializations within one category
+      security: []
+      parameters:
+        - name: slug
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Specialization labels
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { type: string }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /ref/enums:
+    get:
+      tags: [Reference]
+      summary: Fixed option lists and tunable constants
+      security: []
+      responses:
+        '200':
+          description: Enum bundle
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/EnumBundle' }
+
+  # ---------------------------------------------------------- Onboarding ----
+  /partners/me/onboarding:
+    get:
+      tags: [Onboarding]
+      summary: Load the saved draft
+      responses:
+        '200':
+          description: Current draft
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OnboardingDraft' }
+    patch:
+      tags: [Onboarding]
+      summary: Save partial progress without completing a step
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OnboardingDraft' }
+      responses:
+        '200':
+          description: Merged draft
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OnboardingDraft' }
+
+  /partners/me/onboarding/steps/{step}:
+    post:
+      tags: [Onboarding]
+      summary: Validate and complete one wizard step
+      parameters:
+        - name: step
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 4 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/OnboardingDraft' }
+      responses:
+        '200':
+          description: Step completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OnboardingDraft' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /partners/me/onboarding/complete:
+    post:
+      tags: [Onboarding]
+      summary: Finalize registration and queue for admin review
+      responses:
+        '200':
+          description: Registration submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Partner' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /partners/me/location/reverse-geocode:
+    post:
+      tags: [Onboarding]
+      summary: Resolve a dropped pin to a postal address
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [latitude, longitude]
+              properties:
+                latitude: { type: number, format: double }
+                longitude: { type: number, format: double }
+      responses:
+        '200':
+          description: Resolved address
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      locality: { type: string }
+                      street: { type: string }
+                      city: { type: string }
+                      pincode: { type: string }
+                      formatted: { type: string }
+
+  # ------------------------------------------------------------- Partner ----
+  /partners/me:
+    get:
+      tags: [Partner]
+      summary: The signed-in partner
+      responses:
+        '200':
+          description: Partner record
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Partner' }
+    patch:
+      tags: [Partner]
+      summary: Update profile fields
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Partner' }
+      responses:
+        '200':
+          description: Updated partner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Partner' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /partners/me/availability:
+    patch:
+      tags: [Partner]
+      summary: Toggle online availability
+      description: While offline the partner receives no new lead dispatches.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [is_online]
+              properties:
+                is_online: { type: boolean }
+      responses:
+        '200':
+          description: Updated partner
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Partner' }
+
+  /partners/me/preferences:
+    get:
+      tags: [Partner]
+      summary: Notification and language preferences
+      responses:
+        '200':
+          description: Preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Preferences' }
+    patch:
+      tags: [Partner]
+      summary: Update preferences
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/Preferences' }
+      responses:
+        '200':
+          description: Updated preferences
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Preferences' }
+
+  # -------------------------------------------------------------- Photos ----
+  /partners/me/photos:
+    get:
+      tags: [Photos]
+      summary: Cover and portfolio images
+      responses:
+        '200':
+          description: Photo set
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      cover:
+                        oneOf:
+                          - $ref: '#/components/schemas/Photo'
+                          - type: 'null'
+                      portfolio:
+                        type: array
+                        maxItems: 5
+                        items: { $ref: '#/components/schemas/Photo' }
+    post:
+      tags: [Photos]
+      summary: Upload a cover or portfolio image
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file, kind]
+              properties:
+                file: { type: string, format: binary }
+                kind: { $ref: '#/components/schemas/PhotoKind' }
+                slot:
+                  type: integer
+                  minimum: 1
+                  maximum: 5
+                  description: Portfolio slot index; ignored for a cover.
+                caption: { type: string }
+      responses:
+        '201':
+          description: Uploaded
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Photo' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /partners/me/photos/{id}:
+    delete:
+      tags: [Photos]
+      summary: Remove an image
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # ----------------------------------------------------------------- KYC ----
+  /partners/me/kyc:
+    get:
+      tags: [KYC]
+      summary: Verification state and per-task completion
+      responses:
+        '200':
+          description: KYC state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/KycState' }
+
+  /partners/me/kyc/aadhaar:
+    post:
+      tags: [KYC]
+      summary: Upload both sides of the Aadhaar card
+      description: Stored encrypted at rest and never returned in any response body.
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [front, back]
+              properties:
+                front: { type: string, format: binary }
+                back: { type: string, format: binary }
+      responses:
+        '200':
+          description: Updated KYC state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/KycState' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /partners/me/kyc/video:
+    post:
+      tags: [KYC]
+      summary: Upload the 15-second business clip
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required: [file]
+              properties:
+                file: { type: string, format: binary }
+      responses:
+        '200':
+          description: Updated KYC state
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/KycState' }
+        '422':
+          description: Clip exceeds the 15-second or 50 MB limit
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /partners/me/kyc/submit:
+    post:
+      tags: [KYC]
+      summary: Submit both artefacts for review
+      responses:
+        '200':
+          description: Moved to pending review
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/KycState' }
+        '409': { $ref: '#/components/responses/Conflict' }
+
+  /partners/me/kyc/schedule-call:
+    post:
+      tags: [KYC]
+      summary: Book a live verification call instead
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [preferred_at]
+              properties:
+                preferred_at: { type: string, format: date-time }
+      responses:
+        '200':
+          description: Call requested
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/KycState' }
+
+  # ------------------------------------------------------------- Billing ----
+  /plans:
+    get:
+      tags: [Billing]
+      summary: The membership catalogue
+      description: Server-driven. Clients render what is returned and never hardcode tiers.
+      responses:
+        '200':
+          description: Plans
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/MembershipPlan' }
+
+  /partners/me/membership:
+    get:
+      tags: [Billing]
+      summary: The active subscription and quota usage
+      responses:
+        '200':
+          description: Membership
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Membership' }
+
+  /checkout/preview:
+    post:
+      tags: [Billing]
+      summary: Compute order totals
+      description: >
+        All pricing, discounting and GST happen here. The client never derives
+        totals; it renders the returned line items verbatim.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, cycle]
+              properties:
+                plan_id: { type: string }
+                cycle: { $ref: '#/components/schemas/BillingCycle' }
+                promo_code: { type: string }
+      responses:
+        '200':
+          description: Order preview
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/OrderPreview' }
+
+  /promo/validate:
+    post:
+      tags: [Billing]
+      summary: Check a promo code before submit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '200':
+          description: The promo, or null when unknown or expired
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    oneOf:
+                      - $ref: '#/components/schemas/PromoCode'
+                      - type: 'null'
+
+  /checkout/orders:
+    post:
+      tags: [Billing]
+      summary: Create a pending order
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [plan_id, cycle, payment_method]
+              properties:
+                plan_id: { type: string }
+                cycle: { $ref: '#/components/schemas/BillingCycle' }
+                promo_code: { type: string }
+                payment_method: { $ref: '#/components/schemas/PaymentMethod' }
+      responses:
+        '201':
+          description: Order created with a gateway handoff
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Order' }
+
+  /checkout/orders/{id}/confirm:
+    post:
+      tags: [Billing]
+      summary: Confirm payment after the gateway SDK returns
+      description: >
+        The server verifies the signature with the provider before activating
+        anything. A client-reported success is never trusted on its own.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [gateway_payment_id, gateway_signature]
+              properties:
+                gateway_payment_id: { type: string }
+                gateway_signature: { type: string }
+      responses:
+        '200':
+          description: Membership activated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Membership' }
+        '402':
+          description: Payment verification failed
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  # --------------------------------------------------------------- Leads ----
+  /leads:
+    get:
+      tags: [Leads]
+      summary: List leads
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/LeadStatus' }
+        - name: urgency
+          in: query
+          schema: { $ref: '#/components/schemas/LeadUrgency' }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Paginated leads
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Lead' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+
+  /leads/summary:
+    get:
+      tags: [Leads]
+      summary: Inbox banner figures and per-status counts
+      responses:
+        '200':
+          description: Summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/LeadSummary' }
+
+  /leads/{id}:
+    get:
+      tags: [Leads]
+      summary: One lead, including address and customer photos
+      parameters:
+        - $ref: '#/components/parameters/LeadId'
+      responses:
+        '200':
+          description: Lead
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /leads/{id}/accept:
+    post:
+      tags: [Leads]
+      summary: Accept a lead
+      description: Consumes one unit of monthly quota and reveals the customer phone number.
+      parameters:
+        - $ref: '#/components/parameters/LeadId'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '200':
+          description: Accepted, with contact revealed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '402':
+          description: Monthly lead quota exhausted
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '409':
+          description: Lead expired or already taken
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /leads/{id}/decline:
+    post:
+      tags: [Leads]
+      summary: Decline a lead
+      parameters:
+        - $ref: '#/components/parameters/LeadId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                reason: { type: string }
+      responses:
+        '200':
+          description: Declined
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+
+  /leads/{id}/quote:
+    post:
+      tags: [Leads]
+      summary: Send a quote to the customer
+      parameters:
+        - $ref: '#/components/parameters/LeadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [amount]
+              properties:
+                amount:
+                  type: integer
+                  minimum: 100
+                  description: Whole rupees, floor of 100.
+                note:
+                  type: string
+                  maxLength: 280
+      responses:
+        '200':
+          description: Quote submitted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Lead' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  # ------------------------------------------------------------ Services ----
+  /partners/me/services:
+    get:
+      tags: [Services]
+      summary: The partner's catalogue
+      parameters:
+        - name: category_slug
+          in: query
+          schema: { type: string }
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/ServiceStatus' }
+        - name: q
+          in: query
+          schema: { type: string }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Services
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/PartnerService' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+    post:
+      tags: [Services]
+      summary: Add a catalogue entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PartnerService' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PartnerService' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+
+  /partners/me/services/{id}:
+    patch:
+      tags: [Services]
+      summary: Update a service
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PartnerService' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PartnerService' }
+    delete:
+      tags: [Services]
+      summary: Remove a service
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /partners/me/services/{id}/status:
+    patch:
+      tags: [Services]
+      summary: Activate or pause a service
+      parameters:
+        - $ref: '#/components/parameters/ServiceId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/ServiceStatus' }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/PartnerService' }
+
+  /partners/me/catalog-visibility:
+    get:
+      tags: [Services]
+      summary: Read the catalogue master switch
+      responses:
+        '200':
+          description: Visibility
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      visible: { type: boolean }
+    patch:
+      tags: [Services]
+      summary: Hide or show the whole catalogue at once
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visible]
+              properties:
+                visible: { type: boolean }
+      responses:
+        '200':
+          description: Updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      visible: { type: boolean }
+
+  # ----------------------------------------------------- Dashboard/Growth ---
+  /partners/me/dashboard:
+    get:
+      tags: [Dashboard]
+      summary: Everything the home screen needs in one round trip
+      responses:
+        '200':
+          description: Dashboard payload
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/Dashboard' }
+
+  /partners/me/stats:
+    get:
+      tags: [Growth]
+      summary: Performance metrics, lead velocity and recent activity
+      parameters:
+        - name: range
+          in: query
+          schema:
+            $ref: '#/components/schemas/StatsRange'
+      responses:
+        '200':
+          description: Stats
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data: { $ref: '#/components/schemas/GrowthStats' }
+
+  /partners/me/activity:
+    get:
+      tags: [Growth]
+      summary: The full activity feed
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Activity events
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/ActivityEvent' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+
+  # ---------------------------------------------------------- Engagement ----
+  /referrals/validate:
+    post:
+      tags: [Engagement]
+      summary: Validate a referral code before submit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code]
+              properties:
+                code: { type: string }
+      responses:
+        '200':
+          description: Validation result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      valid: { type: boolean }
+                      bonus_amount: { type: [integer, 'null'] }
+                      message: { type: [string, 'null'] }
+
+  /partners/me/referrals:
+    get:
+      tags: [Engagement]
+      summary: Referral code, credits earned and referred partners
+      responses:
+        '200':
+          description: Referral summary
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      code: { type: string }
+                      credits_earned: { type: integer }
+                      bonus_per_referral: { type: integer }
+                      referrals:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            partner_name: { type: string }
+                            status: { type: string }
+                            joined_at: { type: string, format: date-time }
+
+  /partners/me/reviews:
+    get:
+      tags: [Engagement]
+      summary: Customer reviews
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Reviews
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Review' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+
+  /notifications:
+    get:
+      tags: [Engagement]
+      summary: Notification feed
+      parameters:
+        - name: unread_only
+          in: query
+          schema: { type: boolean, default: false }
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PerPage'
+      responses:
+        '200':
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Notification' }
+                  meta: { $ref: '#/components/schemas/PageMeta' }
+
+  /notifications/read-all:
+    post:
+      tags: [Engagement]
+      summary: Mark every notification read
+      responses:
+        '204': { description: Marked read }
+
+  /devices:
+    post:
+      tags: [Engagement]
+      summary: Register a device for push delivery
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fcm_token, platform]
+              properties:
+                fcm_token: { type: string }
+                platform: { type: string, enum: [ios, android] }
+                app_version: { type: string }
+      responses:
+        '204': { description: Registered }
+
+  /devices/{fcm_token}:
+    delete:
+      tags: [Engagement]
+      summary: Unregister a device on logout
+      parameters:
+        - name: fcm_token
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '204': { description: Unregistered }
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PerPage:
+      name: per_page
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+    LeadId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+      examples:
+        default: { value: ld_8924 }
+    ServiceId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: >
+        Replaying a key within 24 hours returns the original response rather
+        than repeating the side effect.
+      schema: { type: string, format: uuid }
+
+  responses:
+    Unauthenticated:
+      description: Missing, expired or invalid access token
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: No such resource
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Conflict:
+      description: State conflict
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    ValidationFailed:
+      description: Body parsed but failed validation
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    RateLimited:
+      description: Too many requests
+      headers:
+        Retry-After:
+          schema: { type: integer }
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    # ------------------------------------------------------------- Common ---
+    Error:
+      type: object
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - bad_request
+                - unauthenticated
+                - forbidden
+                - not_found
+                - conflict
+                - validation_failed
+                - rate_limited
+                - internal_error
+                - invalid_otp
+                - otp_expired
+                - invalid_credentials
+                - lead_expired
+                - lead_taken
+                - quota_exhausted
+                - quote_below_minimum
+                - kyc_incomplete
+                - clip_too_long
+                - portfolio_full
+                - payment_failed
+                - phone_change_requires_otp
+            message: { type: string }
+            field_errors:
+              type: object
+              additionalProperties: { type: string }
+
+    PageMeta:
+      type: object
+      properties:
+        page: { type: integer }
+        per_page: { type: integer }
+        total: { type: integer }
+        total_pages: { type: integer }
+
+    # -------------------------------------------------------------- Enums ---
+    OtpChannel:
+      type: string
+      enum: [whatsapp, sms]
+      default: whatsapp
+    EntityType:
+      type: string
+      enum: [sole_proprietor, partnership_llp, individual]
+    VerificationStatus:
+      type: string
+      enum: [unverified, pending_admin_approval, verified, rejected]
+    KycStatus:
+      type: string
+      enum: [not_started, in_progress, pending_review, verified, rejected]
+    KycTaskKind:
+      type: string
+      enum: [aadhaar, business_video]
+    PhotoKind:
+      type: string
+      enum: [cover, portfolio]
+    LeadStatus:
+      type: string
+      enum: [new, contacted, missed, accepted, declined, quoted]
+    LeadUrgency:
+      type: string
+      enum: [urgent, standard, immediate]
+    ServiceStatus:
+      type: string
+      enum: [active, paused, draft]
+    PricingType:
+      type: string
+      enum: [fixed, starting_from]
+    BillingCycle:
+      type: string
+      enum: [monthly, annual]
+    PaymentMethod:
+      type: string
+      enum: [upi, card, netbanking_wallet]
+    OrderStatus:
+      type: string
+      enum: [pending, paid, failed, refunded]
+    StatsRange:
+      type: string
+      enum: [today, this_week, this_month, last_3_months]
+      default: this_month
+    ActivityType:
+      type: string
+      enum: [new_lead, quote_accepted, review_received]
+
+    # --------------------------------------------------------------- Auth ---
+    OtpChallenge:
+      type: object
+      properties:
+        challenge_id: { type: string }
+        phone: { type: string }
+        channel: { $ref: '#/components/schemas/OtpChannel' }
+        resend_after_seconds: { type: integer, examples: [60] }
+        code_length: { type: integer, examples: [6] }
+
+    AuthSession:
+      type: object
+      properties:
+        access_token: { type: string }
+        refresh_token: { type: string }
+        expires_in: { type: integer, examples: [3600] }
+        partner_id: { type: string }
+        is_new_partner:
+          type: boolean
+          description: Routes a first-time partner into onboarding.
+
+    # ---------------------------------------------------------- Reference ---
+    City:
+      type: object
+      properties:
+        id: { type: string, examples: [hyderabad] }
+        label: { type: string, examples: ['Hyderabad & Secunderabad, Telangana'] }
+
+    ServiceCategory:
+      type: object
+      properties:
+        slug: { type: string, examples: [ac_repair] }
+        label: { type: string, examples: ['AC Repair & Maintenance'] }
+        short_tag:
+          type: string
+          description: Compact label used on service cards.
+          examples: ['AC Repair']
+        specializations:
+          type: array
+          items: { type: string }
+
+    EnumBundle:
+      type: object
+      properties:
+        entity_types:
+          type: array
+          items:
+            type: object
+            properties:
+              value: { type: string }
+              label: { type: string }
+        experience_bands:
+          type: array
+          items: { type: string }
+        durations:
+          type: array
+          items: { type: string }
+        pricing_types:
+          type: array
+          items:
+            type: object
+            properties:
+              value: { type: string }
+              label: { type: string }
+        service_radius:
+          type: object
+          properties:
+            min_km: { type: integer, examples: [2] }
+            max_km: { type: integer, examples: [30] }
+            default_km: { type: integer, examples: [15] }
+        commission_percent:
+          type: integer
+          description: Listing fee on in-app catalogue bookings. Bookings from leads carry none.
+          examples: [10]
+        gst_percent: { type: integer, examples: [18] }
+
+    # ---------------------------------------------------------- Onboarding --
+    OnboardingDraft:
+      type: object
+      properties:
+        business_name: { type: string }
+        owner_name: { type: string }
+        entity_type: { $ref: '#/components/schemas/EntityType' }
+        phone: { type: string }
+        phone_verified: { type: boolean }
+        whatsapp_alerts: { type: boolean }
+        email: { type: string, format: email }
+        city_id: { type: [string, 'null'] }
+        referral_code: { type: string }
+        category_slug: { type: [string, 'null'] }
+        specializations:
+          type: array
+          items: { type: string }
+        experience_band: { type: [string, 'null'] }
+        service_description: { type: string, maxLength: 500 }
+        shop_name: { type: string }
+        street: { type: string }
+        landmark: { type: string }
+        pincode: { type: string, pattern: '^[0-9]{6}$' }
+        latitude: { type: [number, 'null'], format: double }
+        longitude: { type: [number, 'null'], format: double }
+        locality: { type: [string, 'null'] }
+        service_radius_km: { type: number, minimum: 2, maximum: 30 }
+        cover_photo_id: { type: [string, 'null'] }
+        portfolio_photo_ids:
+          type: array
+          maxItems: 5
+          items: { type: string }
+        selected_plan_id: { type: [string, 'null'] }
+        current_step: { type: integer, minimum: 1, maximum: 4 }
+        completed_steps:
+          type: array
+          items: { type: integer }
+
+    # ------------------------------------------------------------ Partner ---
+    BusinessAddress:
+      type: object
+      properties:
+        shop_name: { type: string }
+        street: { type: string }
+        landmark: { type: [string, 'null'] }
+        pincode: { type: string }
+        locality: { type: [string, 'null'] }
+        city: { type: [string, 'null'] }
+        latitude: { type: [number, 'null'], format: double }
+        longitude: { type: [number, 'null'], format: double }
+        service_radius_km: { type: number, minimum: 2, maximum: 30 }
+
+    OnboardingProgress:
+      type: object
+      properties:
+        current_step: { type: integer }
+        completed_steps:
+          type: array
+          items: { type: integer }
+        total_steps: { type: integer, examples: [4] }
+
+    Partner:
+      type: object
+      properties:
+        id: { type: string }
+        owner_name: { type: string }
+        business_name: { type: string }
+        phone: { type: string }
+        email: { type: [string, 'null'], format: email }
+        entity_type: { $ref: '#/components/schemas/EntityType' }
+        city_id: { type: [string, 'null'] }
+        city_label: { type: [string, 'null'] }
+        address:
+          oneOf:
+            - $ref: '#/components/schemas/BusinessAddress'
+            - type: 'null'
+        category_slug: { type: string }
+        specializations:
+          type: array
+          items: { type: string }
+        experience_band: { type: [string, 'null'] }
+        service_description: { type: [string, 'null'] }
+        rating: { type: number, format: float, examples: [4.9] }
+        review_count: { type: integer, examples: [142] }
+        completion_rate:
+          type: integer
+          description: Percentage of accepted jobs marked complete.
+          examples: [98]
+        member_since: { type: [string, 'null'], format: date }
+        verification_status: { $ref: '#/components/schemas/VerificationStatus' }
+        phone_verified: { type: boolean }
+        is_online: { type: boolean }
+        whatsapp_alerts: { type: boolean }
+        photo_count: { type: integer }
+        active_service_count: { type: integer }
+        referral_credits: { type: integer }
+        language: { type: string, examples: ['English (India)'] }
+        onboarding: { $ref: '#/components/schemas/OnboardingProgress' }
+
+    Preferences:
+      type: object
+      properties:
+        lead_notifications: { type: boolean }
+        lead_sound: { type: string, examples: [loud_chime] }
+        whatsapp_alerts: { type: boolean }
+        language: { type: string, examples: ['en-IN'] }
+
+    Photo:
+      type: object
+      properties:
+        id: { type: string }
+        kind: { $ref: '#/components/schemas/PhotoKind' }
+        slot: { type: [integer, 'null'] }
+        caption: { type: [string, 'null'] }
+        url: { type: string, format: uri }
+        width: { type: integer }
+        height: { type: integer }
+        bytes: { type: integer }
+        content_type: { type: string }
+        uploaded_at: { type: string, format: date-time }
+
+    # ---------------------------------------------------------------- KYC ---
+    KycTask:
+      type: object
+      properties:
+        kind: { $ref: '#/components/schemas/KycTaskKind' }
+        completed: { type: boolean }
+        submitted_at: { type: [string, 'null'], format: date-time }
+
+    KycState:
+      type: object
+      properties:
+        status: { $ref: '#/components/schemas/KycStatus' }
+        tasks:
+          type: array
+          items: { $ref: '#/components/schemas/KycTask' }
+        review_eta: { type: string }
+        scheduled_call_at: { type: [string, 'null'], format: date-time }
+        rejection_reason: { type: [string, 'null'] }
+
+    # ------------------------------------------------------------ Billing ---
+    PlanFeature:
+      type: object
+      properties:
+        text: { type: string }
+        bold_prefix:
+          type: [string, 'null']
+          description: Emphasised leading run, e.g. "Unlimited".
+        included: { type: boolean, default: true }
+        highlighted:
+          type: boolean
+          default: false
+          description: Renders in its own tinted sub-row.
+        badge:
+          type: [string, 'null']
+          description: Trailing tier chip, e.g. "PRO".
+
+    MembershipPlan:
+      type: object
+      properties:
+        id: { type: string }
+        name: { type: string }
+        eyebrow: { type: [string, 'null'] }
+        tagline: { type: string }
+        monthly_price: { type: integer }
+        annual_monthly_price:
+          type: integer
+          description: Effective per-month price when billed annually.
+        is_free: { type: boolean }
+        is_recommended: { type: boolean }
+        ribbon_label: { type: [string, 'null'] }
+        lead_quota:
+          type: [integer, 'null']
+          description: Monthly lead allowance; null means unlimited.
+        features:
+          type: array
+          items: { $ref: '#/components/schemas/PlanFeature' }
+
+    Membership:
+      type: object
+      properties:
+        plan_id: { type: string }
+        plan_name: { type: string }
+        cycle: { $ref: '#/components/schemas/BillingCycle' }
+        leads_used: { type: integer }
+        lead_quota: { type: [integer, 'null'] }
+        leads_remaining: { type: integer }
+        renews_on: { type: [string, 'null'], format: date }
+        is_active: { type: boolean }
+
+    PromoCode:
+      type: object
+      properties:
+        code: { type: string, examples: [WELCOMEPRO] }
+        discount: { type: number, format: double, examples: [200.00] }
+        description: { type: [string, 'null'] }
+
+    OrderLine:
+      type: object
+      properties:
+        label: { type: string }
+        amount: { type: number, format: double }
+        is_discount: { type: boolean }
+
+    OrderPreview:
+      type: object
+      description: >
+        GST applies to the post-discount subtotal. For Growth Pro annual with
+        WELCOMEPRO: (999 - 200) x 0.18 = 143.82, total 942.82.
+      properties:
+        plan_id: { type: string }
+        cycle: { $ref: '#/components/schemas/BillingCycle' }
+        promo:
+          oneOf:
+            - $ref: '#/components/schemas/PromoCode'
+            - type: 'null'
+        lines:
+          type: array
+          items: { $ref: '#/components/schemas/OrderLine' }
+        tax_percent: { type: integer, examples: [18] }
+        total: { type: number, format: double, examples: [942.82] }
+        currency: { type: string, examples: [INR] }
+
+    Order:
+      type: object
+      properties:
+        order_id: { type: string }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        total: { type: number, format: double }
+        currency: { type: string }
+        gateway:
+          type: object
+          properties:
+            provider: { type: string, examples: [razorpay] }
+            order_ref: { type: string }
+            checkout_token: { type: string }
+
+    # -------------------------------------------------------------- Leads ---
+    LeadPhoto:
+      type: object
+      properties:
+        id: { type: string }
+        caption: { type: string, examples: ['Unit 1'] }
+        url: { type: string, format: uri }
+
+    Lead:
+      type: object
+      properties:
+        id: { type: string }
+        reference: { type: string, examples: ['LD-8924'] }
+        customer_name:
+          type: string
+          description: Surname abbreviated server-side for privacy.
+          examples: ['John D.']
+        customer_verified: { type: boolean }
+        customer_phone:
+          type: [string, 'null']
+          description: Null until the lead is accepted.
+        contact_revealed: { type: boolean }
+        service_name: { type: string }
+        category_slug: { type: string }
+        description: { type: string }
+        locality: { type: string }
+        full_address:
+          type: [string, 'null']
+          description: Populated on the detail endpoint only.
+        distance_km: { type: number, format: float }
+        drive_time: { type: [string, 'null'] }
+        budget_min: { type: [integer, 'null'] }
+        budget_max: { type: [integer, 'null'] }
+        budget_is_fixed: { type: boolean }
+        suggested_quote: { type: [integer, 'null'] }
+        preferred_slot: { type: [string, 'null'] }
+        status: { $ref: '#/components/schemas/LeadStatus' }
+        urgency: { $ref: '#/components/schemas/LeadUrgency' }
+        created_at: { type: string, format: date-time }
+        expires_at:
+          type: [string, 'null']
+          format: date-time
+          description: Drives the countdown badge; past this the lead becomes missed.
+        photos:
+          type: array
+          items: { $ref: '#/components/schemas/LeadPhoto' }
+        viewed_by_other_pros: { type: integer }
+        match_rate: { type: [string, 'null'] }
+        quoted_amount: { type: [integer, 'null'] }
+
+    LeadSummary:
+      type: object
+      properties:
+        today_count: { type: integer }
+        urgent_count: { type: integer }
+        average_response: { type: string, examples: ['4 mins'] }
+        match_rate: { type: string, examples: ['98%'] }
+        counts:
+          type: object
+          additionalProperties: { type: integer }
+
+    # ----------------------------------------------------------- Services ---
+    PartnerService:
+      type: object
+      required: [name, category_slug, price, description]
+      properties:
+        id: { type: string, readOnly: true }
+        name: { type: string }
+        description: { type: string, maxLength: 500 }
+        category_slug: { type: string }
+        category_tag: { type: string, readOnly: true }
+        sub_type: { type: [string, 'null'] }
+        price: { type: integer, minimum: 0 }
+        pricing_type: { $ref: '#/components/schemas/PricingType' }
+        status: { $ref: '#/components/schemas/ServiceStatus' }
+        commission_percent: { type: integer, readOnly: true }
+        duration: { type: [string, 'null'], examples: ['45 mins'] }
+        turnaround: { type: [string, 'null'], examples: ['Same Day'] }
+        image_url: { type: [string, 'null'], format: uri }
+        created_at: { type: string, format: date-time, readOnly: true }
+
+    # ------------------------------------------------------------- Growth ---
+    MetricPoint:
+      type: object
+      properties:
+        key: { type: string, examples: [total_leads] }
+        label: { type: string }
+        value:
+          type: string
+          description: Pre-formatted for display; the server owns rounding.
+        delta: { type: [string, 'null'], examples: ['+12%'] }
+        suffix: { type: [string, 'null'] }
+
+    VelocityPoint:
+      type: object
+      properties:
+        label: { type: string, examples: [F] }
+        value: { type: integer }
+        is_peak: { type: boolean }
+
+    LeadVelocity:
+      type: object
+      properties:
+        points:
+          type: array
+          items: { $ref: '#/components/schemas/VelocityPoint' }
+        total: { type: integer }
+        peak_label: { type: string, examples: ['Peak on Fri'] }
+        delta_label: { type: string, examples: ['+18%'] }
+        daily_average: { type: string, examples: ['Avg 9.3 leads/day'] }
+
+    ActivityEvent:
+      type: object
+      properties:
+        id: { type: string }
+        type: { $ref: '#/components/schemas/ActivityType' }
+        title: { type: string }
+        subtitle: { type: string }
+        occurred_at: { type: string, format: date-time }
+
+    GrowthStats:
+      type: object
+      properties:
+        range: { $ref: '#/components/schemas/StatsRange' }
+        metrics:
+          type: array
+          items: { $ref: '#/components/schemas/MetricPoint' }
+        velocity: { $ref: '#/components/schemas/LeadVelocity' }
+        activity:
+          type: array
+          items: { $ref: '#/components/schemas/ActivityEvent' }
+
+    Dashboard:
+      type: object
+      properties:
+        partner: { $ref: '#/components/schemas/Partner' }
+        membership: { $ref: '#/components/schemas/Membership' }
+        headline_metrics:
+          type: object
+          properties:
+            new_leads: { type: integer }
+            new_leads_delta: { type: string, examples: ['+3 today'] }
+            rating: { type: number, format: float }
+        quick_actions:
+          type: object
+          properties:
+            active_service_count: { type: integer }
+            profile_views_delta: { type: string }
+            review_count: { type: integer }
+        recent_leads:
+          type: array
+          items: { $ref: '#/components/schemas/Lead' }
+
+    # --------------------------------------------------------- Engagement ---
+    Review:
+      type: object
+      properties:
+        id: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string }
+        customer_name: { type: string }
+        service_name: { type: string }
+        created_at: { type: string, format: date-time }
+
+    Notification:
+      type: object
+      properties:
+        id: { type: string }
+        type: { type: string, examples: [new_lead] }
+        title: { type: string }
+        body: { type: string }
+        read: { type: boolean }
+        deep_link: { type: string, examples: ['infio://leads/ld_8924'] }
+        created_at: { type: string, format: date-time }
+
+webhooks:
+  paymentEvent:
+    post:
+      summary: Payment gateway callback
+      description: >
+        Inbound from the gateway to Infio. Verify the provider signature before
+        processing. Delivery is at-least-once, so handlers must be idempotent
+        on gateway_payment_id.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                event:
+                  type: string
+                  enum: [payment.captured, payment.failed, refund.processed]
+                order_id: { type: string }
+                gateway_payment_id: { type: string }
+                amount: { type: number, format: double }
+                currency: { type: string }
+                captured_at: { type: string, format: date-time }
+      responses:
+        '204': { description: Acknowledged }

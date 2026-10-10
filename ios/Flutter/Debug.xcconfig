@@ -1,0 +1,13 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.debug.xcconfig"
+#include "Generated.xcconfig"
+
+// This project lives in an iCloud-synced folder. The file provider stamps
+// build outputs with com.apple.FinderInfo, and codesign rejects that with
+// "resource fork, Finder information, or similar detritus not allowed".
+//
+// Simulator builds do not need signed frameworks, so signing is skipped for
+// the simulator SDK only. Device builds and archives sign normally.
+CODE_SIGNING_ALLOWED[sdk=iphonesimulator*] = NO
+CODE_SIGNING_REQUIRED[sdk=iphonesimulator*] = NO
+CODE_SIGN_IDENTITY[sdk=iphonesimulator*] =
+EXPANDED_CODE_SIGN_IDENTITY[sdk=iphonesimulator*] =
